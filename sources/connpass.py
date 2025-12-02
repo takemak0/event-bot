@@ -5,8 +5,8 @@ import config
 
 class ConnpassSource(BaseEventSource):
     def fetch_events(self):
-        # v2エンドポイント
-        url = "https://connpass.com/api/v2/event/"
+        # v2エンドポイント（eventsは複数形）
+        url = "https://connpass.com/api/v2/events/"
         
         # ヘッダー設定
         headers = {
@@ -14,8 +14,9 @@ class ConnpassSource(BaseEventSource):
         }
 
         # APIキーがある場合は認証ヘッダーを追加
+        # connpass APIは通常、X-API-Keyヘッダーまたはクエリパラメータで認証
         if config.CONNPASS_API_KEY:
-            headers["Authorization"] = f"Bearer {config.CONNPASS_API_KEY}"
+            headers["X-API-Key"] = config.CONNPASS_API_KEY
         else:
             print("Warning: CONNPASS_API_KEY is missing.")
 
@@ -61,7 +62,22 @@ class ConnpassSource(BaseEventSource):
     def _fetch_events_from_api(self, url, params, headers, seen_event_ids):
         """APIからイベントを取得し、重複を除外する"""
         try:
-            res = requests.get(url, params=params, headers=headers, timeout=10)
+            # APIキーをクエリパラメータとしても試す（ヘッダーと両方）
+            request_params = params.copy()
+            if config.CONNPASS_API_KEY and "X-API-Key" in headers:
+                # クエリパラメータとしても追加（APIの仕様により異なる可能性があるため）
+                request_params["key"] = config.CONNPASS_API_KEY
+            
+            res = requests.get(url, params=request_params, headers=headers, timeout=10)
+            
+            # ステータスコードを確認
+            if res.status_code == 404:
+                print(f"⚠️  404エラー: エンドポイントが見つかりません")
+                print(f"   URL: {url}")
+                print(f"   パラメータ: {request_params}")
+                print(f"   レスポンス: {res.text[:500]}")
+                return []
+            
             res.raise_for_status()
             
             raw_events = res.json().get("events", [])
@@ -74,10 +90,15 @@ class ConnpassSource(BaseEventSource):
                     unique_events.append(ev)
             
             return unique_events
+        except requests.exceptions.HTTPError as e:
+            print(f"❌ HTTPエラー (ステータスコード: {res.status_code})")
+            print(f"   パラメータ: {params}")
+            print(f"   レスポンス: {res.text[:500]}")
+            return []
         except Exception as e:
-            print(f"Connpass API error (params: {params}): {e}")
+            print(f"❌ Connpass API error (params: {params}): {e}")
             if 'res' in locals():
-                print(f"Response content: {res.text[:200]}")
+                print(f"   レスポンス: {res.text[:200]}")
             return []
 
     def _filter_events(self, events):

@@ -1,0 +1,19 @@
+#Python cache
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+
+#Virtual environment
+venv/
+.venv/
+env/
+
+#Environment variables (local testing)
+.env
+.env.local
+.env.*.local
+
+#MacOS metadata
+.DS_Store
