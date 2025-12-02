@@ -5,33 +5,43 @@ import config
 
 class ConnpassSource(BaseEventSource):
     def fetch_events(self):
-        # ここにAPIのURLを明示的に記述します
-        url = "https://connpass.com/api/v1/event/"
+        # v2エンドポイントに変更
+        url = "https://connpass.com/api/v2/event/"
         
         keywords = config.TECH_CONFIG["KEYWORDS"]
         params = {
             "keyword": ",".join(keywords),
             "count": 50,
-            "order": 2, # 開催日時順
+            "order": 2,
         }
         
+        # ヘッダー設定
+        headers = {
+            # 一般的なブラウザ偽装（念の為残します）
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        # APIキーがある場合は認証ヘッダーを追加
+        if config.CONNPASS_API_KEY:
+            # 【重要】ドキュメントの指定に合わせて "Bearer" の部分を調整してください
+            headers["Authorization"] = f"Bearer {config.CONNPASS_API_KEY}"
+        else:
+            print("Warning: CONNPASS_API_KEY is missing.")
+
         try:
-            # APIリクエストを実行
-            res = requests.get(url, params=params)
+            res = requests.get(url, params=params, headers=headers)
             res.raise_for_status()
             
-            # レスポンスからイベントリストを取得
             raw_events = res.json().get("events", [])
-            
-            # フィルタリング処理へ
             return self._filter_events(raw_events)
         except Exception as e:
             print(f"Connpass error: {e}")
+            if 'res' in locals():
+                 print(f"Response content: {res.text[:200]}")
             return []
 
     def _filter_events(self, events):
         filtered = []
-        # JST (日本標準時) で現在時刻を取得
         now = datetime.now(timezone(timedelta(hours=9)))
         target_end = now + timedelta(days=config.TECH_CONFIG["DAYS_AHEAD"])
         locations = config.TECH_CONFIG["LOCATIONS"]
@@ -41,18 +51,14 @@ class ConnpassSource(BaseEventSource):
             eid = ev["event_id"]
             if eid in seen: continue
             
-            # 日付チェック
             try:
                 start = datetime.fromisoformat(ev["started_at"])
-                # 開催期間外ならスキップ
                 if not (now <= start <= target_end): continue
             except: continue
 
-            # 場所チェック (設定がある場合のみ)
             if locations:
                 place = str(ev.get("place") or "")
                 addr = str(ev.get("address") or "")
-                # 設定された場所キーワードが、場所名か住所のどちらかに含まれているか確認
                 if not any(loc in place or loc in addr for loc in locations):
                     continue
             
@@ -68,7 +74,6 @@ class ConnpassSource(BaseEventSource):
             {"type": "divider"}
         ]
         
-        # Slackの見やすさのため最大10件に絞る
         for ev in events[:10]:
             start = datetime.fromisoformat(ev["started_at"]).strftime("%m/%d %H:%M")
             limit = ev.get("limit")
