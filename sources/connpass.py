@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import requests
+import time
 from .base import BaseEventSource
 import config
 
@@ -39,17 +40,22 @@ class ConnpassSource(BaseEventSource):
         all_events = []
         seen_event_ids = set()
         
+        # リクエスト間隔（秒） - レート制限を避けるため
+        REQUEST_DELAY = 2
+        
         # 1. 東京都のイベントを取得
         params_tokyo = params.copy()
         params_tokyo["address"] = "東京都"
         events_tokyo = self._fetch_events_from_api(url, params_tokyo, headers, seen_event_ids)
         all_events.extend(events_tokyo)
+        time.sleep(REQUEST_DELAY)  # リクエスト間隔を空ける
         
         # 2. 神奈川県のイベントを取得
         params_kanagawa = params.copy()
         params_kanagawa["address"] = "神奈川県"
         events_kanagawa = self._fetch_events_from_api(url, params_kanagawa, headers, seen_event_ids)
         all_events.extend(events_kanagawa)
+        time.sleep(REQUEST_DELAY)  # リクエスト間隔を空ける
         
         # 3. オンラインイベントを取得
         params_online = params.copy()
@@ -59,47 +65,69 @@ class ConnpassSource(BaseEventSource):
         
         return self._filter_events(all_events)
     
-    def _fetch_events_from_api(self, url, params, headers, seen_event_ids):
-        """APIからイベントを取得し、重複を除外する"""
-        try:
-            # APIキーをクエリパラメータとしても試す（ヘッダーと両方）
-            request_params = params.copy()
-            if config.CONNPASS_API_KEY and "X-API-Key" in headers:
-                # クエリパラメータとしても追加（APIの仕様により異なる可能性があるため）
-                request_params["key"] = config.CONNPASS_API_KEY
-            
-            res = requests.get(url, params=request_params, headers=headers, timeout=10)
-            
-            # ステータスコードを確認
-            if res.status_code == 404:
-                print(f"⚠️  404エラー: エンドポイントが見つかりません")
-                print(f"   URL: {url}")
-                print(f"   パラメータ: {request_params}")
-                print(f"   レスポンス: {res.text[:500]}")
+    def _fetch_events_from_api(self, url, params, headers, seen_event_ids, max_retries=3):
+        """APIからイベントを取得し、重複を除外する（リトライ機能付き）"""
+        request_params = params.copy()
+        if config.CONNPASS_API_KEY and "X-API-Key" in headers:
+            # クエリパラメータとしても追加（APIの仕様により異なる可能性があるため）
+            request_params["key"] = config.CONNPASS_API_KEY
+        
+        for attempt in range(max_retries):
+            try:
+                res = requests.get(url, params=request_params, headers=headers, timeout=10)
+                
+                # ステータスコードを確認
+                if res.status_code == 404:
+                    print(f"⚠️  404エラー: エンドポイントが見つかりません")
+                    print(f"   URL: {url}")
+                    print(f"   パラメータ: {request_params}")
+                    print(f"   レスポンス: {res.text[:500]}")
+                    return []
+                
+                # 429エラー（レート制限）の場合はリトライ
+                if res.status_code == 429:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5  # 5秒、10秒、15秒と段階的に待機
+                        print(f"⚠️  429エラー（レート制限）: {wait_time}秒待機してリトライします... (試行 {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"❌ HTTPエラー (ステータスコード: 429) - リトライ上限に達しました")
+                        print(f"   パラメータ: {params}")
+                        print(f"   レスポンス: {res.text[:500]}")
+                        return []
+                
+                res.raise_for_status()
+                
+                raw_events = res.json().get("events", [])
+                # 重複を除外
+                unique_events = []
+                for ev in raw_events:
+                    eid = ev.get("event_id")
+                    if eid and eid not in seen_event_ids:
+                        seen_event_ids.add(eid)
+                        unique_events.append(ev)
+                
+                return unique_events
+                
+            except requests.exceptions.HTTPError as e:
+                if res.status_code == 429 and attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 5
+                    print(f"⚠️  429エラー（レート制限）: {wait_time}秒待機してリトライします... (試行 {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"❌ HTTPエラー (ステータスコード: {res.status_code})")
+                    print(f"   パラメータ: {params}")
+                    print(f"   レスポンス: {res.text[:500]}")
+                    return []
+            except Exception as e:
+                print(f"❌ Connpass API error (params: {params}): {e}")
+                if 'res' in locals():
+                    print(f"   レスポンス: {res.text[:200]}")
                 return []
-            
-            res.raise_for_status()
-            
-            raw_events = res.json().get("events", [])
-            # 重複を除外
-            unique_events = []
-            for ev in raw_events:
-                eid = ev.get("event_id")
-                if eid and eid not in seen_event_ids:
-                    seen_event_ids.add(eid)
-                    unique_events.append(ev)
-            
-            return unique_events
-        except requests.exceptions.HTTPError as e:
-            print(f"❌ HTTPエラー (ステータスコード: {res.status_code})")
-            print(f"   パラメータ: {params}")
-            print(f"   レスポンス: {res.text[:500]}")
-            return []
-        except Exception as e:
-            print(f"❌ Connpass API error (params: {params}): {e}")
-            if 'res' in locals():
-                print(f"   レスポンス: {res.text[:200]}")
-            return []
+        
+        return []  # すべてのリトライが失敗した場合
 
     def _filter_events(self, events):
         """日付範囲でフィルタリング"""
