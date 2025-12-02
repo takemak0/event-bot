@@ -181,6 +181,23 @@ class ConnpassSource(BaseEventSource):
         
         return filtered
 
+    def _get_event_url(self, ev):
+        """イベントのURLを安全に取得する。なければ event_id から構築する。"""
+        if not isinstance(ev, dict):
+            return None
+        # まず標準フィールド
+        url = ev.get("event_url") or ev.get("eventUrl") or ev.get("url")
+        if url:
+            return url
+        # フォールバック: id または event_id から構築
+        eid = ev.get("id") or ev.get("event_id")
+        if eid:
+            try:
+                return f"https://connpass.com/event/{int(eid)}/"
+            except Exception:
+                return f"https://connpass.com/event/{eid}/"
+        return None
+
     def create_message(self, events):
         if not events: return None
         
@@ -192,8 +209,8 @@ class ConnpassSource(BaseEventSource):
         for ev in events[:10]:
             try:
                 # 日付のパース処理を統一
-                started_at = ev["started_at"].replace("Z", "+00:00")
-                start = datetime.fromisoformat(started_at).strftime("%m/%d %H:%M")
+                started_at = ev.get("started_at", "").replace("Z", "+00:00")
+                start = datetime.fromisoformat(started_at).strftime("%m/%d %H:%M") if started_at else "日時不明"
             except Exception as e:
                 print(f"Error parsing date in create_message for event {ev.get('id') or ev.get('event_id')}: {e}")
                 start = "日時不明"
@@ -201,12 +218,19 @@ class ConnpassSource(BaseEventSource):
             limit = ev.get("limit")
             accepted = ev.get("accepted", 0)
             status = "🔴満席" if limit and accepted >= limit else "🟢"
-            
+
+            title = ev.get('title', 'タイトル不明')
+            url = self._get_event_url(ev)
+            if url:
+                title_text = f"<{url}|{title}>"
+            else:
+                title_text = title
+
             blocks.append({
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*{start}* {status} <{ev['event_url']}|{ev['title']}>\n主催: {ev.get('owner_display_name')}"
+                    "text": f"*{start}* {status} {title_text}\n主催: {ev.get('owner_display_name') or '不明'}"
                 }
             })
             blocks.append({"type": "divider"})
