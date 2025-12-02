@@ -18,8 +18,10 @@ class ConnpassSource(BaseEventSource):
         # connpass APIは通常、X-API-Keyヘッダーまたはクエリパラメータで認証
         if config.CONNPASS_API_KEY:
             headers["X-API-Key"] = config.CONNPASS_API_KEY
+            masked_key = config.CONNPASS_API_KEY[:8] + "..." if len(config.CONNPASS_API_KEY) > 8 else "***"
+            print(f"🔑 APIキー設定済み: {masked_key}")
         else:
-            print("Warning: CONNPASS_API_KEY is missing.")
+            print("⚠️  Warning: CONNPASS_API_KEY is missing.")
 
         # キーワード条件: ("データ") and ("メルカリ" or "LINE")
         # 場所条件: 東京都、神奈川県、オンラインの3つのOR条件
@@ -43,27 +45,39 @@ class ConnpassSource(BaseEventSource):
         # リクエスト間隔（秒） - レート制限を避けるため
         REQUEST_DELAY = 2
         
+        print(f"🔍 Connpass API検索開始: keyword='データ', keyword_or='メルカリ,LINE'")
+        
         # 1. 東京都のイベントを取得
+        print("📍 東京都のイベントを検索中...")
         params_tokyo = params.copy()
         params_tokyo["address"] = "東京都"
         events_tokyo = self._fetch_events_from_api(url, params_tokyo, headers, seen_event_ids)
+        print(f"   取得件数: {len(events_tokyo)}件")
         all_events.extend(events_tokyo)
         time.sleep(REQUEST_DELAY)  # リクエスト間隔を空ける
         
         # 2. 神奈川県のイベントを取得
+        print("📍 神奈川県のイベントを検索中...")
         params_kanagawa = params.copy()
         params_kanagawa["address"] = "神奈川県"
         events_kanagawa = self._fetch_events_from_api(url, params_kanagawa, headers, seen_event_ids)
+        print(f"   取得件数: {len(events_kanagawa)}件")
         all_events.extend(events_kanagawa)
         time.sleep(REQUEST_DELAY)  # リクエスト間隔を空ける
         
         # 3. オンラインイベントを取得
+        print("📍 オンラインイベントを検索中...")
         params_online = params.copy()
         params_online["address"] = "オンライン"
         events_online = self._fetch_events_from_api(url, params_online, headers, seen_event_ids)
+        print(f"   取得件数: {len(events_online)}件")
         all_events.extend(events_online)
         
-        return self._filter_events(all_events)
+        print(f"📊 合計取得件数（フィルタ前）: {len(all_events)}件")
+        filtered_events = self._filter_events(all_events)
+        print(f"📅 日付フィルタ後: {len(filtered_events)}件")
+        
+        return filtered_events
     
     def _fetch_events_from_api(self, url, params, headers, seen_event_ids, max_retries=3):
         """APIからイベントを取得し、重複を除外する（リトライ機能付き）"""
@@ -100,13 +114,30 @@ class ConnpassSource(BaseEventSource):
                 res.raise_for_status()
                 
                 raw_events = res.json().get("events", [])
+                print(f"   ✅ API成功: {len(raw_events)}件のイベントを取得")
+                
                 # 重複を除外
                 unique_events = []
+                duplicate_count = 0
                 for ev in raw_events:
-                    eid = ev.get("event_id")
-                    if eid and eid not in seen_event_ids:
+                    # connpass API v2では 'id' フィールドを使用
+                    eid = ev.get("id") or ev.get("event_id")
+                    if not eid:
+                        print(f"   ⚠️  IDが存在しないイベント: {ev.get('title', 'N/A')[:30]}")
+                        continue
+                    
+                    if eid not in seen_event_ids:
                         seen_event_ids.add(eid)
                         unique_events.append(ev)
+                    else:
+                        duplicate_count += 1
+                        if duplicate_count <= 3:  # 最初の3件の重複のみ表示
+                            print(f"   🔄 重複スキップ: id={eid}, title={ev.get('title', 'N/A')[:30]}")
+                
+                if duplicate_count > 0:
+                    print(f"   ℹ️  重複除外: {len(raw_events)}件 → {len(unique_events)}件 (重複: {duplicate_count}件)")
+                else:
+                    print(f"   ℹ️  重複なし: {len(raw_events)}件")
                 
                 return unique_events
                 
@@ -134,14 +165,18 @@ class ConnpassSource(BaseEventSource):
         filtered = []
         now = datetime.now(timezone(timedelta(hours=9)))
         target_end = now + timedelta(days=config.TECH_CONFIG["DAYS_AHEAD"])
+        
+        print(f"📅 日付フィルタ: 現在={now.strftime('%Y-%m-%d %H:%M:%S')}, 終了日={target_end.strftime('%Y-%m-%d %H:%M:%S')}")
 
         for ev in events:
             try:
                 start = datetime.fromisoformat(ev["started_at"].replace("Z", "+00:00"))
                 if now <= start <= target_end:
                     filtered.append(ev)
+                else:
+                    print(f"   ⏭️  除外: {ev.get('title', 'N/A')[:30]}... (開始日時: {start.strftime('%Y-%m-%d %H:%M')})")
             except Exception as e:
-                print(f"Error parsing date for event {ev.get('event_id')}: {e}")
+                print(f"   ❌ 日付パースエラー (id: {ev.get('id') or ev.get('event_id')}): {e}")
                 continue
         
         return filtered
@@ -160,7 +195,7 @@ class ConnpassSource(BaseEventSource):
                 started_at = ev["started_at"].replace("Z", "+00:00")
                 start = datetime.fromisoformat(started_at).strftime("%m/%d %H:%M")
             except Exception as e:
-                print(f"Error parsing date in create_message for event {ev.get('event_id')}: {e}")
+                print(f"Error parsing date in create_message for event {ev.get('id') or ev.get('event_id')}: {e}")
                 start = "日時不明"
             
             limit = ev.get("limit")
