@@ -3,3 +3,4 @@ beautifulsoup4
 lxml
 google-generativeai
 python-dotenv
+importlib-metadata>=4.0.0
