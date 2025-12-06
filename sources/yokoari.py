@@ -80,16 +80,21 @@ class YokoariSource(BaseEventSource):
             data_rows.append(ev)
         return data_rows
 
-    def _filter_events(self, events):
-        # 必要に応じて日付で絞り込み（当日分だけなど）
+def _filter_events(self, events):
+        """date_text が「7(日)」や「12/7(日)」などでも、今日 (JST) のイベントを抽出できるようにする"""
         filtered = []
         now = datetime.now(timezone(timedelta(hours=9)))
+        today_day = now.day
         for ev in events:
-            # 例: date_textが "12月20日" みたいな場合、今日と一致だけ通す
             dtxt = ev.get("date_text", "")
-            if f"{now.month}月{now.day}日" in dtxt:
-                filtered.append(ev)
-        # もし全件欲しい場合は return events
+            # 「7(日)」や「12/7(日)」などから先頭の数字（=日）を抽出
+            import re
+            m = re.match(r"(?:(\d{1,2})/)?(\d{1,2})[（(]?", dtxt)  # 12/7(日)や 7(日)
+            if m:
+                month, day = m.groups()
+                if not month or int(month) == now.month:  # 月指定なければ今月想定
+                    if int(day) == today_day:
+                        filtered.append(ev)
         return filtered
 
     def create_message(self, events):
