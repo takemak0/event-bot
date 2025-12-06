@@ -4,16 +4,16 @@ from bs4 import BeautifulSoup
 from .base import BaseEventSource
 import config
 
-# YokoariSource: 横浜アリーナのスケジュール（/schedule/）を取得するソース
-# - まず requests+BeautifulSoup で table#calbox を探す
-# - 見つからない場合は Playwright でレンダリングして DOM を取得するフォールバックあり
 class YokoariSource(BaseEventSource):
-    LIST_URL = "https://www.yokohama-arena.co.jp/schedule/"
-
     def fetch_events(self):
-        # 軽量にまず requests で試す
+        # 今月のスケジュールページURLを生成
+        now = datetime.now(timezone(timedelta(hours=9)))
+        schedule_url = f"https://www.yokohama-arena.co.jp/event/{now.year}-{now.month:02d}"
+        print(f"横浜アリーナスケジュールURL: {schedule_url}")
+
+        # まず requests で取得
         try:
-            res = requests.get(self.LIST_URL, timeout=15)
+            res = requests.get(schedule_url, timeout=15)
             res.raise_for_status()
             html = res.text
             events = self._parse_table_from_html(html)
@@ -25,19 +25,18 @@ class YokoariSource(BaseEventSource):
         except Exception as e:
             print(f"   ❌ requests でページ取得失敗: {e}")
 
-        # フォールバック: Playwright でレンダリングして取得
+        # Playwright フォールバック
         try:
             from playwright.sync_api import sync_playwright
         except Exception as e:
-            print("   ❌ Playwright をインポートできません。インストールしてください（pip install playwright）。詳細:", e)
+            print("   ❌ Playwright をインポートできません。pip install playwright が必要です。詳細:", e)
             return []
 
         try:
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True)
                 page = browser.new_page()
-                page.goto(self.LIST_URL, wait_until="networkidle", timeout=30000)
-                # 必要であればスクロールやボタン操作を追加
+                page.goto(schedule_url, wait_until="networkidle", timeout=30000)
                 content = page.content()
                 browser.close()
 
@@ -46,16 +45,13 @@ class YokoariSource(BaseEventSource):
                 print(f"   ✅ Headless でレンダリングして取得: {len(events)}件")
                 return self._filter_events(events)
             else:
-                print("   ⚠️ レンダリング後でもイベント行が見つかりません。印刷で作られるコンテンツが別生成されている可能性があります。")
+                print("   ⚠️ レンダリング後でもイベント行が見つかりません。")
                 return []
         except Exception as e:
             print(f"   ❌ Playwright 実行中にエラー: {e}")
             return []
 
     def _parse_table_from_html(self, html):
-        """HTMLから<table id='calbox'> をパースしてイベントリストを返す。
-           期待されるカラム: 日付, イベント名, 開場, 開演, 終演
-        """
         soup = BeautifulSoup(html, "html.parser")
         table = soup.find("table", id="calbox")
         if not table:
@@ -63,7 +59,6 @@ class YokoariSource(BaseEventSource):
 
         rows = table.find_all("tr")
         data_rows = []
-        # ヘッダを除いてパース
         for tr in rows[1:]:
             cols = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
             if not cols or len(cols) < 2:
@@ -86,64 +81,33 @@ class YokoariSource(BaseEventSource):
         return data_rows
 
     def _filter_events(self, events):
-        """簡易フィルタ。date_text から started_at を構築するロジックを追加してください。"""
+        # 必要に応じて日付で絞り込み（当日分だけなど）
         filtered = []
         now = datetime.now(timezone(timedelta(hours=9)))
-        target_end = now + timedelta(days=config.TECH_CONFIG.get("DAYS_AHEAD", 7))
-
         for ev in events:
-            # 現時点では started_at を作成していないため一旦全件含める。
-            # 必要であれば date_text と start を解析して started_at を作成し、
-            # 現在日時範囲でフィルタしてください。
-            filtered.append(ev)
-
+            # 例: date_textが "12月20日" みたいな場合、今日と一致だけ通す
+            dtxt = ev.get("date_text", "")
+            if f"{now.month}月{now.day}日" in dtxt:
+                filtered.append(ev)
+        # もし全件欲しい場合は return events
         return filtered
 
     def create_message(self, events):
-        """BaseEventSource の抽象メソッド実装。
-        Slack 用の block を返す。events は _parse_table_from_html で作った辞書のリストを想定。
-        """
         if not events:
             return None
-
         blocks = [
             {"type": "header", "text": {"type": "plain_text", "text": "📍 横浜アリーナ 予定ピックアップ", "emoji": True}},
             {"type": "divider"}
         ]
-
-        # イベントの簡易表示（上位10件）
         for ev in events[:10]:
             title = ev.get("title") or "タイトル不明"
             date_text = ev.get("date_text") or ""
-            open_time = ev.get("open") or ""
             start_time = ev.get("start") or ""
             end_time = ev.get("end") or ""
             url = ev.get("event_url")
-
-            # 表示テキストを組み立て
-            time_parts = []
-            if date_text:
-                time_parts.append(date_text)
-            if start_time:
-                time_parts.append(f"開演 {start_time}")
-            elif open_time:
-                time_parts.append(f"開場 {open_time}")
-            if end_time:
-                time_parts.append(f"終演 {end_time}")
+            time_parts = [p for p in (date_text, start_time and f"開演 {start_time}", end_time and f"終演 {end_time}") if p]
             time_text = " · ".join(time_parts) if time_parts else "日時不明"
-
-            if url:
-                title_text = f"<{url}|{title}>"
-            else:
-                title_text = title
-
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*{time_text}*  {title_text}\n会場: 横浜アリーナ"
-                }
-            })
+            title_text = f"<{url}|{title}>" if url else title
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{time_text}*  {title_text}\n会場: 横浜アリーナ"}})
             blocks.append({"type": "divider"})
-
         return {"blocks": blocks}
