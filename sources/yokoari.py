@@ -98,3 +98,52 @@ class YokoariSource(BaseEventSource):
             filtered.append(ev)
 
         return filtered
+
+    def create_message(self, events):
+        """BaseEventSource の抽象メソッド実装。
+        Slack 用の block を返す。events は _parse_table_from_html で作った辞書のリストを想定。
+        """
+        if not events:
+            return None
+
+        blocks = [
+            {"type": "header", "text": {"type": "plain_text", "text": "📍 横浜アリーナ 予定ピックアップ", "emoji": True}},
+            {"type": "divider"}
+        ]
+
+        # イベントの簡易表示（上位10件）
+        for ev in events[:10]:
+            title = ev.get("title") or "タイトル不明"
+            date_text = ev.get("date_text") or ""
+            open_time = ev.get("open") or ""
+            start_time = ev.get("start") or ""
+            end_time = ev.get("end") or ""
+            url = ev.get("event_url")
+
+            # 表示テキストを組み立て
+            time_parts = []
+            if date_text:
+                time_parts.append(date_text)
+            if start_time:
+                time_parts.append(f"開演 {start_time}")
+            elif open_time:
+                time_parts.append(f"開場 {open_time}")
+            if end_time:
+                time_parts.append(f"終演 {end_time}")
+            time_text = " · ".join(time_parts) if time_parts else "日時不明"
+
+            if url:
+                title_text = f"<{url}|{title}>"
+            else:
+                title_text = title
+
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{time_text}*  {title_text}\n会場: 横浜アリーナ"
+                }
+            })
+            blocks.append({"type": "divider"})
+
+        return {"blocks": blocks}
