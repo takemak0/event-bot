@@ -1,33 +1,52 @@
-name: Daily Info Bot
+# Daily schedule job that runs the bot and ensures Playwright browsers are installed on the runner.
+# Adjust the cron schedule (UTC) to your desired execution time.
+name: Daily schedule (with Playwright)
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *'  # daily at 00:00 UTC (change as needed)
   workflow_dispatch:
 
 jobs:
-  notify:
+  run-daily-schedule:
     runs-on: ubuntu-latest
-    env:
-      TZ: 'Asia/Tokyo'
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else echo "No requirements.txt found"; fi
 
-      - name: Run Bot
+      - name: Install Playwright browsers (Chromium)
+        # Install only Chromium (faster & often sufficient). If you need all browsers or system deps,
+        # use: python -m playwright install --with-deps
+        run: |
+          python -m playwright install chromium
+
+      - name: Run daily schedule script
         env:
+          # pass required secrets as env vars (configure in your repo settings)
           SLACK_WEBHOOK_TECH: ${{ secrets.SLACK_WEBHOOK_TECH }}
           SLACK_WEBHOOK_LIFE: ${{ secrets.SLACK_WEBHOOK_LIFE }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # 追加: Connpass API Key
           CONNPASS_API_KEY: ${{ secrets.CONNPASS_API_KEY }}
-        run: python main.py
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          # run the main entrypoint; adjust if your entrypoint differs
+          python main.py
