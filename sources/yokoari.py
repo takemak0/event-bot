@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 from .base import BaseEventSource
 import config
+import re
 
 class YokoariSource(BaseEventSource):
     def fetch_events(self):
@@ -80,7 +81,7 @@ class YokoariSource(BaseEventSource):
             data_rows.append(ev)
         return data_rows
 
-def _filter_events(self, events):
+    def _filter_events(self, events):
         """date_text が「7(日)」や「12/7(日)」などでも、今日 (JST) のイベントを抽出できるようにする"""
         filtered = []
         now = datetime.now(timezone(timedelta(hours=9)))
@@ -88,7 +89,6 @@ def _filter_events(self, events):
         for ev in events:
             dtxt = ev.get("date_text", "")
             # 「7(日)」や「12/7(日)」などから先頭の数字（=日）を抽出
-            import re
             m = re.match(r"(?:(\d{1,2})/)?(\d{1,2})[（(]?", dtxt)  # 12/7(日)や 7(日)
             if m:
                 month, day = m.groups()
