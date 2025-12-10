@@ -18,8 +18,6 @@ class ConnpassSource(BaseEventSource):
         # connpass APIは通常、X-API-Keyヘッダーまたはクエリパラメータで認証
         if config.CONNPASS_API_KEY:
             headers["X-API-Key"] = config.CONNPASS_API_KEY
-            masked_key = config.CONNPASS_API_KEY[:8] + "..." if len(config.CONNPASS_API_KEY) > 8 else "***"
-            print(f"🔑 APIキー設定済み: {masked_key}")
         else:
             print("⚠️  Warning: CONNPASS_API_KEY is missing.")
 
@@ -33,50 +31,19 @@ class ConnpassSource(BaseEventSource):
             "keyword_or": "メルカリ,LINE",
             "count": 50,
             "order": 2,  # 更新日時順
+            # 東京・神奈川・オンライン
+            "prefecture": "tokyo,kanagawa,online",
         }
         
-        # addressパラメータを複数回指定するため、URLを手動で構築
-        # または、3つのリクエストに分けて実行してマージする方法を採用
-        # （APIの仕様により、複数のaddressを一度に指定できない可能性があるため）
-        
-        all_events = []
         seen_event_ids = set()
-        
-        # リクエスト間隔（秒） - レート制限を避けるため
-        REQUEST_DELAY = 2
-        
-        print(f"🔍 Connpass API検索開始: keyword='データ', keyword_or='メルカリ,LINE'")
-        
-        # 1. 東京都のイベントを取得
-        print("📍 東京都のイベントを検索中...")
-        params_tokyo = params.copy()
-        params_tokyo["address"] = "東京都"
-        events_tokyo = self._fetch_events_from_api(url, params_tokyo, headers, seen_event_ids)
-        print(f"   取得件数: {len(events_tokyo)}件")
-        all_events.extend(events_tokyo)
-        time.sleep(REQUEST_DELAY)  # リクエスト間隔を空ける
-        
-        # 2. 神奈川県のイベントを取得
-        print("📍 神奈川県のイベントを検索中...")
-        params_kanagawa = params.copy()
-        params_kanagawa["address"] = "神奈川県"
-        events_kanagawa = self._fetch_events_from_api(url, params_kanagawa, headers, seen_event_ids)
-        print(f"   取得件数: {len(events_kanagawa)}件")
-        all_events.extend(events_kanagawa)
-        time.sleep(REQUEST_DELAY)  # リクエスト間隔を空ける
-        
-        # 3. オンラインイベントを取得
-        print("📍 オンラインイベントを検索中...")
-        params_online = params.copy()
-        params_online["address"] = "オンライン"
-        events_online = self._fetch_events_from_api(url, params_online, headers, seen_event_ids)
-        print(f"   取得件数: {len(events_online)}件")
-        all_events.extend(events_online)
-        
-        print(f"📊 合計取得件数（フィルタ前）: {len(all_events)}件")
-        filtered_events = self._filter_events(all_events)
+
+        print("🔍 Connpass API検索開始: keyword='データ', keyword_or='メルカリ,LINE', prefecture='tokyo,kanagawa,online'")
+        events = self._fetch_events_from_api(self, url, params, headers, seen_event_ids)
+
+        print(f"📊 合計取得件数（フィルタ前）: {len(events)}件")
+        filtered_events = self._filter_events(self, events)
         print(f"📅 日付フィルタ後: {len(filtered_events)}件")
-        
+
         return filtered_events
     
     def _fetch_events_from_api(self, url, params, headers, seen_event_ids, max_retries=3):
