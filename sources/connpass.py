@@ -37,11 +37,16 @@ class ConnpassSource(BaseEventSource):
         
         seen_event_ids = set()
 
-        print("🔍 Connpass API検索開始: keyword='データ', keyword_or='メルカリ,LINE', prefecture='tokyo,kanagawa,online'")
-        events = self._fetch_events_from_api(self, url, params, headers, seen_event_ids)
+        print(
+            "🔍 Connpass API検索開始: "
+            "keyword='データ', keyword_or='メルカリ,LINE', "
+            f"prefecture='{params['prefecture']}'"
+        )
 
-        print(f"📊 合計取得件数（フィルタ前）: {len(events)}件")
-        filtered_events = self._filter_events(self, events)
+        all_events = self._fetch_events_from_api(self, url, params, headers, seen_event_ids)
+
+        print(f"📊 合計取得件数（フィルタ前）: {len(all_events)}件")
+        filtered_events = self._filter_events(self, all_events)
         print(f"📅 日付フィルタ後: {len(filtered_events)}件")
 
         return filtered_events
