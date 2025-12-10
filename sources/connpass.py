@@ -43,10 +43,10 @@ class ConnpassSource(BaseEventSource):
             f"prefecture='{params['prefecture']}'"
         )
 
-        all_events = self._fetch_events_from_api(self, url, params, headers, seen_event_ids)
+        all_events = self._fetch_events_from_api(url, params, headers, seen_event_ids)
 
         print(f"📊 合計取得件数（フィルタ前）: {len(all_events)}件")
-        filtered_events = self._filter_events(self, all_events)
+        filtered_events = self._filter_events(all_events)
         print(f"📅 日付フィルタ後: {len(filtered_events)}件")
 
         return filtered_events
