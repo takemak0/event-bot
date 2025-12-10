@@ -20,12 +20,7 @@ class ConnpassSource(BaseEventSource):
             headers["X-API-Key"] = config.CONNPASS_API_KEY
         else:
             print("⚠️  Warning: CONNPASS_API_KEY is missing.")
-
-        # キーワード条件: ("データ") and ("メルカリ" or "LINE")
-        # 場所条件: 東京都、神奈川県、オンラインの3つのOR条件
-        # connpass APIではaddressパラメータを複数回指定することでOR条件で検索可能
         
-        # パラメータを構築（addressを複数回指定するためリスト形式で準備）
         params = {
             "keyword": "データ",
             "keyword_or": "メルカリ,LINE",
