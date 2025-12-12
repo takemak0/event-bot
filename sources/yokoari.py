@@ -16,7 +16,7 @@ class YokoariSource(BaseEventSource):
         if getattr(config, "GEMINI_API_KEY", None):
             genai.configure(api_key=config.GEMINI_API_KEY)
             # モデル名は旧コードと同じ
-            self.model = genai.GenerativeModel("gemini-2.0-flash")
+            self.model = genai.GenerativeModel("gemini-2.5-flash")
         else:
             self.model = None
             print("Warning: GEMINI_API_KEY is not set.")
